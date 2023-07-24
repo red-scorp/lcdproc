@@ -18,5 +18,6 @@ MODULE_EXPORT void rawserial_flush(Driver *drvthis);
 MODULE_EXPORT void rawserial_string(Driver *drvthis, int x, int y, const char string[]);
 MODULE_EXPORT void rawserial_chr(Driver *drvthis, int x, int y, char c);
 MODULE_EXPORT const char *rawserial_get_info(Driver *drvthis);
+MODULE_EXPORT const char *rawserial_get_key(Driver *drvthis);
 
 #endif

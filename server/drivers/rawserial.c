@@ -50,11 +50,17 @@
 #include "shared/report.h"
 
 
+#define KEYBUF_SIZE		256
+
 /** private data for the \c rawserial driver */
 typedef struct rawserial_private_data {
 	int width;		/**< display width in characters */
 	int height;		/**< display height in characters */
 	char *framebuf;		/**< frame buffer */
+	int keybuf_size;	/**< key input buffer maximum length in bytes */
+	int keybuf_used;	/**< key input buffer currently filled bytes */
+	int keybuf_skip;	/**< key input buffer currently reported bytes */
+	char *keybuf;		/**< key input buffer */
 	int fd;		/**< handle to the device */
 
 	/** \name Event loop timing. refresh_time and refresh_delta form the
@@ -179,6 +185,18 @@ rawserial_init(Driver *drvthis)
 	}
 	memset(p->framebuf, ' ', p->width * p->height);
 
+	p->keybuf_size = KEYBUF_SIZE;
+	p->keybuf_used = 0;
+	p->keybuf_skip = 0;
+
+	/* Allocate the key input buffer */
+	p->keybuf = malloc(p->keybuf_size);
+	if (p->keybuf == NULL) {
+		report(RPT_ERR, "%s: unable to create key input buffer", drvthis->name);
+		goto err_out;
+	}
+	memset(p->keybuf, 0, p->keybuf_size);
+
 	/* Set up I/O port correctly, and open it... */
 	p->fd = open(device, O_RDWR | O_NOCTTY | O_NDELAY);
 	if (p->fd == -1) {
@@ -237,6 +255,8 @@ rawserial_close(Driver *drvthis)
 			close(p->fd);
 		if (p->framebuf != NULL)
 			free(p->framebuf);
+		if (p->keybuf != NULL)
+			free(p->keybuf);
 
 		free(p);
 	}
@@ -396,12 +416,49 @@ rawserial_chr(Driver *drvthis, int x, int y, char c)
 MODULE_EXPORT const char *
 rawserial_get_info(Driver *drvthis)
 {
-	static char *info_string =
+	static const char *info_string =
 		"Raw Text mode driver for use as a source for sending data to external hardware";
 
 	return info_string;
 }
 
+/**
+ * Get key from the key panel connected to the display.
+ * \param drvthis  Pointer to driver structure.
+ * \return         String representation of the key;
+ *                 \c NULL if nothing available / unmapped key.
+ */
+MODULE_EXPORT const char *
+rawserial_get_key(Driver *drvthis)
+{
+	PrivateData *p = (PrivateData *) drvthis->private_data;
+
+	while(1) {
+		int i;
+
+		if (p->keybuf_skip != 0) {
+			if(p->keybuf_used != p->keybuf_skip)
+				memcpy(p->keybuf, &p->keybuf[p->keybuf_skip], p->keybuf_used - p->keybuf_skip);
+			p->keybuf_skip = 0;
+		}
+
+		for (i = 0; i < p->keybuf_used; i++) {
+			if (p->keybuf[i] == '\n' || p->keybuf[i] == '\r' || p->keybuf[i] == '\0') {
+				p->keybuf[i] = '\0';
+				if (strlen(p->keybuf) != 0) {
+					p->keybuf_skip = i;
+					return p->keybuf;
+				}
+				continue;
+			}
+		}
+
+		if (read(p->fd, &p->keybuf[p->keybuf_used], p->keybuf_size - p->keybuf_used) < 1)
+			break;
+	}
+
+	return "";
+}
 
 /**
  * Get current time in milliseconds, used for determining update event timing
